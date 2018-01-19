@@ -1,0 +1,40 @@
+#ifndef __ECT_XGATE_HXGATE__
+#define __ECT_XGATE_HXGATE__
+
+#include "xgate.hxgate"
+#include "ect_intermediate.h"
+
+
+
+extern CaptureSignal *pwm_list[5];
+
+
+/***********************************************************************
+  * @brief           用于对ECT模块捕捉信号中断处理
+  * @param[in]       CaptureSignal结构体的参数
+  * @return          无
+***********************************************************************/
+interrupt void Capture_Hardware_ISR(CaptureSignal *__restrict pwm);
+
+/***********************************************************************
+  * @brief           用于对ECT模块计数器溢出中断处理
+  * @param[in]       无
+  * @return          无
+***********************************************************************/
+interrupt void Counter_Overflow_Hardware_ISR(int unused);
+
+/***********************************************************************
+  * @brief           用于对xgate模块软件中断0处理中断处理
+  * @param[in]       无
+  * @return          无
+***********************************************************************/
+interrupt void xgate_software_trigger0_isr(int unused);
+
+/***********************************************************************
+  * @brief           用于对ECT模块模数递减计数器溢出中断处理
+  * @param[in]       无
+  * @return          无
+***********************************************************************/
+interrupt void Modulus_Counter_Underflow_Hardware_ISR(int unused);
+
+#endif

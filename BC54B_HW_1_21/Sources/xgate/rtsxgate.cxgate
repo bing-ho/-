@@ -1,0 +1,1401 @@
+/**
+ * File: rtsxgate.cxgate
+ *------------------------------------------------------------------------
+ * runtime routines for XGATE
+ * 16 bit multiplication, division and modulus
+ * 32 bit multiplication, division, modulus and shifts
+ *------------------------------------------------------------------------
+ */
+       
+#include <hidef.h>
+
+/*lint --e{957} , MISRA 8.1 REQ, these are runtime support functions and, as such, are not meant to be called in user code; they are only invoked via jumps, in compiler-generated code */
+/*lint --e{753} , local enums used in HLI */
+/*lint --e{749} , local enumeration constants used in HLI */
+ 
+int errno;
+
+#pragma NO_ENTRY
+#pragma NO_EXIT
+
+#pragma MESSAGE DISABLE C1404
+#pragma MESSAGE DISABLE C5661
+#pragma MESSAGE DISABLE C5703 
+
+void IMULU_16x16r32(void) {
+/**
+;c = a * b      this is a 16 * 16 == 32 bit unsigned multiplication. can be called for signed and unsigned 16 * 16 == 16 bit multiplications
+;a in R2
+;b in R3
+;c in R3:R2
+;i in R4; (Note: we rotate the negative bit 16 times around in i)
+;touched: R3
+;
+;        Algorithm:
+;        
+;          c = 0; i = 0x8000;
+;          CLC;                   -- Clear carry
+;          do {
+;            a >>= 1;             -- Shift with carry!
+;            if (C) c += b;
+;            c >>= 1;             -- Shift with carry!
+;            i= ROT(i);
+;          } while (i != 0x8000);
+;          c >>= 1;               -- Shift with carry!
+;          { (c:a) is 16bit result }
+;
+*/
+  asm {
+    STW       R6, (R0,-R7)
+    STW       R4, (R0,-R7)
+    LDL       R6, #0          /* clear result */
+    LDL       R4, #1          /* loop counter */
+    LSL       R4, #15         /* load $8000 in R4, clear carry */
+  _IMULU_L1:
+    CSR       R2, #1          /* a >>= 1 */
+    BCC       _IMULU_L2
+    ADD       R6, R6, R3      /* c += b */
+  _IMULU_L2:
+    CSR       R6, #1          /* c >>= 1 */
+    ROL       R4, #1
+    BPL       _IMULU_L1
+    CSR       R2, #1          /* a >>= 1 */
+    OR        R3, R0, R6      /* R3:R2 is the result */
+    LDW       R4, (R0,R7+)
+    LDW       R6, (R0,R7+)
+    JAL       R6
+  }
+}
+
+#pragma NO_ENTRY
+#pragma NO_EXIT
+
+void IMULU(void) {
+/**
+;c = a * b      this is a 16 * 16 == 16 bit multiplication. can be called for signed and unsigned 16 * 16 == 16 bit multiplications
+;a in R2
+;b in R3
+;c returned in R2
+;
+*/
+  asm {
+    STW       R1, (R0,-R7)
+/*    STW       R3, (R0,-R7) */
+    STW       R4, (R0,-R7)
+    STW       R5, (R0,-R7)
+
+    MOV R4, R2
+    BPL Pos  /* a is negative? */
+    NEG R4   /* the use -a * -b (here we assume that for -a, many 1 bits are set, so its better to use -a) */
+    NEG R3 
+Pos:
+    LDL R2, #0
+    BRA findOne
+loop:
+    BFINS R4, R0, R5/* clear this bit */
+    MOV R1, R3
+    LSL R1, r5
+    ADD R2, R1, R2
+findOne:    
+    BFFO R5, R4
+    BCC  loop
+
+    LDW       R5, (R0,R7+)
+    LDW       R4, (R0,R7+)
+/*    LDW       R3, (R0,R7+) */
+    LDW       R1, (R0,R7+)
+    JAL       R6
+  }
+}
+
+
+#pragma NO_ENTRY
+#pragma NO_EXIT
+
+void IDIVU(void) {
+/**
+;q = a / b
+;r = a % b
+;a in R2
+;b in R3
+;r:q in R3:R2
+;touched: R3
+;
+;        Algorithm:  
+;        
+;          r = 0; q = a; i = 8;
+;          CLC;            -- Clear carry
+;          do {
+;            (r:q) <<= 1;  -- Shift incl. carry!!
+;            if (r >= b) {
+;              r -= b;
+;              SEC;        -- Set carry
+;            }
+;          } while (--i);
+;          q <<= 1;        -- Shift incl. carry
+;          
+;          {r == a % b && q == a / b}
+;
+*/
+  asm {
+    STW       R6, (R0,-R7)
+    STW       R4, (R0,-R7)
+    LDL       R6, #0          /* clear c_hi */
+    LDL       R4, #1          /* loop counter */
+    LSL       R4, #15         /* load $8000 in R4, clear carry */
+  _IDIVU_L1:
+    CSL       R2, #1
+    CSL       R6, #1
+    CMP       R3, R6          /* b > r ? */
+    BHI       _IDIVU_L2
+    SUB       R6, R6, R3      /* r = r - b */
+    CMPL      R0, #1          /* set carry */
+  _IDIVU_L2:
+    ROL       R4, #1
+    BPL       _IDIVU_L1
+    CSL       R2, #1          /* q <<= 1 */
+    MOV       R3, R6      /* q in R2 and r in R3 */
+    LDW       R4, (R0,R7+)
+    LDW       R6, (R0,R7+)
+    JAL       R6
+  }
+}
+
+
+#pragma NO_ENTRY
+#pragma NO_EXIT
+
+void IDIVS(void) {
+/**
+;c = a / b
+;a in R2
+;b in R3
+;c in R2
+;touched: R3
+;
+*/
+  asm {
+    STW       R6, (R0,-R7)
+    STW       R4, (R0,-R7)
+    LDL       R4, #0
+    SUB       R2, R2, R0
+    BPL       _IDIVS_L1
+    SUB       R2, R0, R2
+    COM       R4, R4
+  _IDIVS_L1:
+    SUB       R3, R3, R0
+    BPL       _IDIVS_L2
+    SUB       R3, R0, R3
+    COM       R4, R4
+  _IDIVS_L2:
+    LDL       R6, %XGATE_8(IDIVU)
+    LDH       R6, %XGATE_8_H(IDIVU)    /* call IDIVU with positive arguments */
+    JAL       R6
+    SUB       R4, R4, R0
+    BPL       _IDIVS_L3
+    SUB       R2, R0, R2                 /* c = -c */
+  _IDIVS_L3:
+    LDW       R4, (R0,R7+)
+    LDW       R6, (R0,R7+)
+    JAL       R6
+  }
+}
+
+#pragma NO_ENTRY
+#pragma NO_EXIT
+
+void IMODS(void) {
+/**
+;c = a % b
+;a in R2
+;b in R3
+;c in R3
+;touched: R2
+;
+*/
+  asm {
+    STW       R6, (R0,-R7)
+    STW       R4, (R0,-R7)
+    OR        R4, R2, R0
+    SUB       R2, R2, R0
+    BPL       _IMODS_L1
+    SUB       R2, R0, R2
+  _IMODS_L1:
+    SUB       R3, R3, R0
+    BPL       _IMODS_L2
+    SUB       R3, R0, R3
+  _IMODS_L2:
+    LDL       R6, %XGATE_8(IDIVU)
+    LDH       R6, %XGATE_8_H(IDIVU)
+    JAL       R6                        /* call __X_IDIVU with positive arguments */
+    SUB       R4, R4, R0                /* was dividend negative? */
+    BPL       _IMODS_L3
+    SUB       R3, R0, R3                /* if yes, then c = -c */
+  _IMODS_L3:
+    LDW       R4, (R0,R7+)              /* result in R3! */
+    LDW       R6, (R0,R7+)
+    JAL       R6
+  }
+}
+
+#pragma NO_ENTRY
+#pragma NO_EXIT
+
+void LMULU(void) {
+/**
+;c = a * b         can also be used for signed multiplication
+;a in R3:R2
+;b in TOS
+;c in R3:R2
+;touched: none
+;
+;        Algorithm:
+;        
+;          c = 0; i = n;
+;          CLC;                   -- Clear carry
+;          do {
+;            a >>= 1;             -- Shift with carry!
+;            if (C) c += b;
+;            c >>= 1;             -- Shift with carry!
+;          } while (--i);
+;          c >>= 1;               -- Shift with carry!
+;          { (c:a) is 16bit result }
+;
+; For counting to 32 we use the following to avoid to clear the carry:
+;        LDL   R5, #0
+; Loop:
+;        XNORL R5, #~1
+;        ROL   R5, #1
+;        BNE   Loop
+; Or in other words, we do in every loop:
+;^ 0001
+;<<= (ROT) 1
+;
+; This results in:
+;0000000000000000  0
+;0000000000000010  1
+;0000000000000110  2
+;...
+;1111111111111110 15
+;1111111111111111 16
+;1111111111111101 17
+;1111111111111001 18
+; ...
+;0000000000000001 31
+;0000000000000000 32
+;
+*/
+
+  asm {
+    STW       R6, (R0,-R7)
+    STW       R4, (R0,-R7)
+    STW       R5, (R0,-R7)
+    STW       R1, (R0,-R7)
+    LDL       R6, #0          /* clear result */
+    LDL       R4, #0
+    ADD       R5, R0,R0       /* clear loop counter and clear carry */
+  _LMULU_L1:
+    CSR       R3, #1          /* a >>= 1 */
+    CSR       R2, #1           
+    BCC       _LMULU_L2
+    LDW       R1, (R7,#10)
+    ADD       R6, R6, R1      /* c += b */
+    LDW       R1, (R7,#8)
+    ADC       R4, R4, R1
+  _LMULU_L2:
+    CSR       R4, #1          /* c >>= 1 */
+    CSR       R6, #1 
+
+    XNORL     R5, #~1
+    ROL       R5, #1
+    BNE       _LMULU_L1
+    CSR       R3, #1          /* a >>= 1 */
+    CSR       R2, #1          
+    LDW       R1, (R0,R7+)
+    LDW       R5, (R0,R7+)
+    LDW       R4, (R0,R7+)
+    LDW       R6, (R0,R7+)    
+    ADDL      R7, #4          /* free parameter b */
+    JAL       R6
+  }
+}
+
+
+#pragma NO_ENTRY
+#pragma NO_EXIT
+
+void LDIVU(void) {
+/**
+;q = a / b
+;r = a % b
+;a in R3:R2
+;b in TOS
+;q in R3:R2
+;r in R4:R5
+;touched: R4:R5
+;
+;algorithm:
+;    r:= 0; q:= b;
+;    clear carry;
+;    for i:= 1 to 32 do
+;      (r:q):= (r:q) * 2;
+;      if r>= a then r:= r- a; set carry end;
+;    end;
+;    q:= q * 2;          
+;
+*/
+  asm {
+    STW       R6, (R0,-R7)
+    STW       R1, (R0,-R7)
+    LDL       R4, #0                     /* r = 0 */
+    LDL       R5, #0
+    ADD       R6, R0,R0                  /* clear loop counter and clear carry */
+  _LDIVU_L1:
+    CSL       R2, #1                     /* (r:q):= (r:q)* 2 */
+    CSL       R3, #1
+    CSL       R4, #1
+    CSL       R5, #1
+    LDW       R1, (R7,#4)
+    CMP       R1, R5                     /* b > r ? */
+    BHI       _LDIVU_L3
+    BNE       _LDIVU_L2
+    LDW       R1, (R7,#6)
+    CMP       R1, R4                     /* b > r (low) ? */
+    BHI       _LDIVU_L3
+  _LDIVU_L2:
+    LDW       R1, (R7,#6)
+    SUB       R4, R4, R1                 /* r = r - b */
+    LDW       R1, (R7,#4)
+    SBC       R5, R5, R1
+    CMPL      R0, #1                     /* set carry */
+  _LDIVU_L3:
+    XNORL     R6, #~1
+    ROL       R6, #1
+    BNE       _LDIVU_L1
+    CSL       R2, #1                     /* q:= q * 2 */
+    CSL       R3, #1                     /* r is in R5:R4 */
+    LDW       R1, (R0,R7+)
+    LDW       R6, (R0,R7+)    
+    ADDL      R7, #4
+    JAL       R6
+  }
+}
+
+
+#pragma NO_ENTRY
+#pragma NO_EXIT
+
+void LDIVS(void) {
+/**
+;c = a / b
+;a in R3:R2
+;b in TOS
+;c in R3:R2
+;touched: none
+;
+*/
+  asm {
+    STW       R6, (R0,-R7)
+    STW       R4, (R0,-R7)
+    STW       R5, (R0,-R7)
+    STW       R1, (R0,-R7)
+    LDW       R6, (R7,#10)
+    LDW       R4, (R7,#8)     
+    LDL       R1, #0
+    SUB       R3, R3, R0
+    BPL       _LDIVS_L1
+    SUB       R2, R0, R2
+    SBC       R3, R0, R3
+    COM       R1, R1
+  _LDIVS_L1:
+    SUB       R4, R4, R0
+    BPL       _LDIVS_L2
+    SUB       R6, R0, R6
+    SBC       R4, R0, R4
+    COM       R1, R1
+  _LDIVS_L2:
+    STW       R6, (R0,-R7)
+    STW       R4, (R0,-R7)
+    LDL       R6, %XGATE_8(LDIVU)
+    LDH       R6, %XGATE_8_H(LDIVU)    /* call LDIVU with positive arguments */
+    JAL       R6
+    SUB       R1, R1, R0
+    BPL       _LDIVS_L3
+    SUB       R2, R0, R2                 /* c = -c */
+    SBC       R3, R0, R3
+  _LDIVS_L3:
+    LDW       R1, (R0,R7+)
+    LDW       R5, (R0,R7+)
+    LDW       R4, (R0,R7+)
+    LDW       R6, (R0,R7+)
+    ADDL      R7, #4
+    JAL       R6
+  }
+}
+
+
+#pragma NO_ENTRY
+#pragma NO_EXIT
+
+void LMODS(void) {
+/**
+;c = a % b
+;a in R3:R2
+;b in TOS
+;c in R3:R2
+;touched: none
+;
+*/
+  asm {
+    STW       R6, (R0,-R7)
+    STW       R1, (R0,-R7)
+    OR        R1, R3, R0
+    LDW       R4, (R7,#6)
+    LDW       R5, (R7,#4)     
+    SUB       R3, R3, R0
+    BPL       _LMODS_L1
+    SUB       R2, R0, R2
+    SBC       R3, R0, R3
+  _LMODS_L1:
+    SUB       R5, R5, R0
+    BPL       _LMODS_L2
+    SUB       R4, R0, R4
+    SBC       R5, R0, R5
+  _LMODS_L2:
+    STW       R4, (R0,-R7)
+    STW       R5, (R0,-R7)
+    LDL       R6, %XGATE_8(LDIVU)
+    LDH       R6, %XGATE_8_H(LDIVU)
+    JAL       R6                        /* call LDIVU with positive arguments */
+    SUB       R1, R1, R0                /* was dividend negative? */
+    BPL       _LMODS_L3
+    SUB       R4, R0, R4                /* if yes, then c = -c */
+    SBC       R5, R0, R5                /* result in R5:R4! */
+  _LMODS_L3:
+    LDW       R1, (R0,R7+)
+    LDW       R6, (R0,R7+)
+    ADDL      R7, #4
+    JAL       R6
+  }
+}
+
+
+#pragma NO_ENTRY
+#pragma NO_EXIT
+
+void LLSL(void) {
+/**
+;b = a << count
+;a in R3:R2
+;count in R4
+;b in R3:R2
+;touched: none
+;
+*/
+  asm {
+    STW       R6, (R0,-R7)
+    STW       R4, (R0,-R7)
+    STW       R5, (R0,-R7)
+    CMPL      R4, #16
+    BGE       _LLSL_L2
+  _LLSL_L1:
+    COM       R5, R0
+    LSL       R3, R4
+    ROL       R2, R4
+    LSL       R5, R4
+    COM       R6, R5
+    AND       R4, R2, R6
+    AND       R2, R2, R5
+    OR        R3, R3, R4
+    BRA       _LLSL_L3
+  _LLSL_L2:
+    SUBL      R4, #16
+    MOV       R3, R2
+    LSL       R3, R4
+    LDL       R2, #0
+  _LLSL_L3:
+    LDW       R5, (R0,R7+)
+    LDW       R4, (R0,R7+)
+    LDW       R6, (R0,R7+)
+    JAL       R6
+  }
+}
+
+
+#pragma NO_ENTRY
+#pragma NO_EXIT
+
+void LLSR(void) {
+/**
+;b = a >> count
+;a in R3:R2
+;count in R4
+;b in R3:R2
+;touched: none
+;
+*/
+  asm {
+    STW       R6, (R0,-R7)
+    STW       R4, (R0,-R7)
+    STW       R5, (R0,-R7)
+    CMPL      R4, #16
+    BGE       _LLSR_L2
+  _LLSR_L1:
+    COM       R5, R0       /* load $FFFF in R5 */
+    LSR       R2, R4
+    ROR       R3, R4
+    LSR       R5, R4
+    COM       R6, R5
+    AND       R4, R3, R6
+    AND       R3, R3, R5
+    OR        R2, R2, R4
+    BRA       _LLSR_L3
+  _LLSR_L2:
+    SUBL      R4, #16
+    MOV       R2, R3
+    LSR       R2, R4
+    LDL       R3, #0
+  _LLSR_L3:
+    LDW       R5, (R0,R7+)
+    LDW       R4, (R0,R7+)
+    LDW       R6, (R0,R7+)
+    JAL       R6
+  }
+}
+
+
+#pragma NO_ENTRY
+#pragma NO_EXIT
+
+void LASR(void) {
+/**
+;b = a >> count
+;a in R3:R2
+;count in R4
+;b in R3:R2
+;touched: none
+;
+*/
+  asm {
+    STW       R6, (R0,-R7)
+    STW       R4, (R0,-R7)
+    SUB       R3, R3, R0
+    BMI       _LASR_L1
+    LDL       R6, %XGATE_8(LLSR)
+    LDH       R6, %XGATE_8_H(LLSR)
+    JAL       R6
+    BRA       _LASR_L4
+  _LASR_L1:
+    CMPL      R4, #16
+    BGE       _LASR_L3
+  _LASR_L2:
+    LDL       R6, #0     
+    CMPL      R0, #1     /* set carry */
+    CSR       R6, R4     /* 1111111000000000 mask */
+    LSR       R2, R4
+    ROR       R3, R4
+    AND       R4, R3, R6
+    OR        R3, R3, R6
+    OR        R2, R2, R4
+    BRA       _LASR_L4
+  _LASR_L3:
+    SUBL      R4, #16
+    MOV       R2, R3
+    ASR       R3, #16     /* encoded as 0, see manual */
+    CSR       R2, R4
+  _LASR_L4:
+    LDW       R4, (R0,R7+)
+    LDW       R6, (R0,R7+)
+    JAL       R6
+  }
+}
+
+
+
+/************** flating point emulation (IEEE32 only) **************/
+
+#ifndef __NO_FLOAT__
+
+#pragma NO_FRAME
+#pragma NO_EXIT
+#pragma NO_ENTRY
+
+
+void FADD(void) {
+ /* add ValA([SP:0..SP:3]) and ValB(R3:R2) */
+ /* format: "seee eeee  emmm mmmm  mmmm mmmm  mmmm mmmm" */
+ /* s: sign, e: exponent, m: mantissa (without leading 1 bit) */
+ enum {                   
+    FrameSize= 10          
+ };
+ asm {
+      STW   R6,(R0,-R7)    /* store return address */
+      STW   R5,(R0,-R7)    /* store callee saved register */
+      STW   R1,(R0,-R7)    /* store callee saved register */
+      STW   R4,(R0,-R7)    /* store callee saved register */
+      STW   R3,(R0,-R7)    /* store high word of ValB */
+                                                                                    
+      LDW   R5,(R7,#FrameSize+0) /* load high word of ValA                                                                                     */
+      LDL   R4, #0x77      /* exponent extraction mask */
+      BFEXT R6,R5,R4       /* get exponent of ValA (0..255) */
+      BEQ   _FADD_l1                                                    
+      ORL   R5,#0x80
+      
+    _FADD_l1:  
+      ANDH  R5,#0x00                                                                        
+      BFEXT R4,R3,R4       /* get exponent of ValB (0..255) */
+      BEQ   _FADD_l2                                                    
+      ORL   R3,#0x80
+      
+    _FADD_l2:                                                           
+      ANDH  R3,#0x00
+      SUB   R1,R4,R6       /* exponent(ValB) - exponent(ValA)                                                                         */
+      BMI   ALargerB
+      LDW   R6,(R7,#FrameSize+2) /* load low word of ValA                                                                                                                                                                      */
+      BEQ   DoOp                                                                        
+      /* shift mantissa of ValB until exponent of ValB matches the one of A                                                                         */
+    AsmallerB:     /* shift mantissa of ValA until exponent of ValA matches the one of B                                                                                     */
+      LSR   R5,#1
+      CSR   R6,#1
+      DEC   R1
+      BNE   AsmallerB
+                                                                                    
+    DoOp:
+      MOV   R1,R4                                                                                    
+      BRA   DoOp1
+      
+    ALargerB:     
+      LSR   R3,#1
+      CSR   R2,#1
+      INC   R1
+      BNE   ALargerB
+                                                                                    
+      MOV   R1,R6   
+      LDW   R6,(R7,#FrameSize+2) /* load low word of ValA                                                                                        */
+
+    DoOp1:                                                                                    
+/*   if (sign(ValA)!= sign(ValB) */
+      STW   R1,(R0,-R7)
+      LDW   R1,(R7,#FrameSize+2)  /* hgh word of ValA */
+      LDW   R4,(R7,#2)            /* hgh word of ValB */
+      XNOR  R1,R1,R4   
+      LDW   R1,(R0,R7+)
+      BMI   AddIt
+
+      SUB   R2,R6,R2               /* a - b */
+      SBC   R3,R5,R3
+      BCC   correctSign
+    wrongSign:
+      LDW   R4,(R7,0)              /* use sign of B */
+      STW   R4,(R7,#FrameSize)
+      SUB   R2,R0,R2
+      SBC   R3,R0,R3
+    correctSign:
+      OR    R5,R2,R3
+      BNE   correctSign2
+      CLR   R1
+      BRA   Pack
+    correctSign2:  
+      BITL  R3,#0x80               /* re-normalize */
+      BNE   NoDecSub
+      DEC   R1
+      BEQ   NoDecSub              
+      LSL   R2,#1
+      CSL   R3,#1
+      BRA   correctSign2
+    NoDecSub:
+      BRA   Pack
+    AddIt:                                                                             
+      ADD   R2,R6,R2               /* a + b */
+      ADC   R3,R5,R3                                                                                    
+      BITH  R3,#0x01
+      BEQ   Pack
+      INC   R1         /* Addition overflow: use higher exponent and shift right the  */
+      LSR   R3,#1
+      CSR   R2,#1
+      BCC   Pack
+      ADDL  R2,#1      /* round  */
+      ADC   R3,R3,R0   /* no additional overflow possible (0b11...111 + 0b11...111 = 0b111...110) */
+    Pack:                                                                                    
+      LDL   R4, #0x77  /* exponent mask */
+      BFINS R3,R1,R4
+      OR    R5,R2,R3
+      BEQ   Packed
+      LDW   R4,(R7,#FrameSize)
+      CMP   R4,R0
+      BMI   SetSign                                                                              
+      ANDH  R3, #0x7F   
+      BRA   Packed
+    SetSign:
+      ORH   R3, #0x80
+    Packed:  
+      ADDL  R7,#2         /* release stack space used for hi word of ValA */
+      LDW   R4,(R0,R7+)   /* restore callee saved register */
+      LDW   R1,(R0,R7+)   /* restore callee saved register */
+      LDW   R5,(R0,R7+)   /* restore callee saved register */
+      LDW   R6,(R0,R7+)   /* restore return address */
+      ADDL  R7, #4     
+      JAL   R6
+  }
+}
+
+#pragma NO_FRAME
+#pragma NO_EXIT
+#pragma NO_ENTRY
+void FSUB(void) {
+ /* sub ValA([SP:0..SP:3]) and ValB(R3:R2) */
+ /* format: "seee eeee  emmm mmmm  mmmm mmmm  mmmm mmmm" */
+ /* s: sign, e: exponent, m: mantissa (without leading 1 bit) */
+  asm {
+      STW   R6,(R0,-R7)
+      OR    R6,R2,R3
+      BEQ   Zero
+      XNORH R3,#0x7F      /* negate b */
+Zero:      
+      LDW   R6,(R0,R7+)
+      LDL   R4,#%XGATE_8(FADD)
+      LDH   R4,#%XGATE_8_H(FADD)
+      JAL   R4            /* a + (-b)              */
+  }
+}
+
+
+#pragma NO_FRAME
+#pragma NO_EXIT
+#pragma NO_ENTRY
+
+void FMUL(void) {
+ /* mul ValA([SP:0..SP:3]) and ValB(R3:R2) */
+ /* format: "seee eeee  emmm mmmm  mmmm mmmm  mmmm mmmm" */
+ /* s: sign, e: exponent, m: mantissa (without leading 1 bit) */
+ enum {
+    FrameSize= 8
+ };
+ asm {
+      STW   R6,(R0,-R7)    /* store return address */
+      STW   R5,(R0,-R7)    /* store callee saved register */
+      STW   R1,(R0,-R7)    /* store callee saved register */
+      STW   R4,(R0,-R7)    /* store callee saved register */
+                                                                                    
+      LDW   R5,(R7,#FrameSize+0) /* load high word of ValA     */
+      XNOR  R1,R5,R3       /* result sign                                                                          */
+      LDL   R4, #0x77      /* exponent extraction mask */
+      BFEXT R6,R5,R4       /* get exponent of ValA (0..255) */
+      BEQ   _FMUL_l1                                                    
+      ORL   R5,#0x80
+      
+    _FMUL_l1:  
+      ANDH  R5,#0x00                                                                        
+      BFEXT R4,R3,R4       /* get exponent of ValB (0..255) */
+      BEQ   _FMUL_l2                                                    
+      ORL   R3,#0x80
+      
+    _FMUL_l2:                                                           
+      ANDH  R3,#0x00
+      
+      ADD   R4,R4,R6       /* resulting exp in R4 */
+      SUBL  R4,#126
+      
+      STW   R2,(R0,-R7)    /* b.lo */
+      STW   R3,(R0,-R7)    /* b.hi */
+      LDW   R3,(R7,#FrameSize+2+4)   /* a.lo */
+      LDL   R6,#%XGATE_8(IMULU_16x16r32)
+      LDH   R6,#%XGATE_8_H(IMULU_16x16r32)
+      JAL   R6             /* a.lo * b.lo */
+      STW   R3,(R0,-R7)    /* save only high word (bits 16 - 31) of result */
+  
+      MOV   R3,R5          /* a.hi */
+      LDW   R2,(R7,#4)     /* b.lo */
+      LDL   R6,#%XGATE_8(IMULU_16x16r32)
+      LDH   R6,#%XGATE_8_H(IMULU_16x16r32)
+      JAL   R6             /* a.hi * b.lo */
+      LDW   R6,(R7,#0)
+      ADD   R6,R6,R2
+      STW   R6,(R7,#0)     /* update bits 16 - 31 of result */
+      ADC   R3,R3,R0
+      STW   R3,(R0,-R7)    /* save bits 32 - 47 of result */
+      
+      LDW   R3,(R7,#FrameSize+2+8)   /* a.lo */
+      LDW   R2,(R7,#4)               /* b.hi */
+      LDL   R6,#%XGATE_8(IMULU_16x16r32)
+      LDH   R6,#%XGATE_8_H(IMULU_16x16r32)
+      JAL   R6             /* a.lo * b.hi */
+      LDW   R6,(R7,#2)
+      ADD   R6,R6,R2
+      STW   R6,(R7,#2)     /* update bits 16 - 31 of result */
+      LDW   R6,(R7,#0)
+      ADC   R6,R6,R3
+      STW   R6,(R7,#0)     /* update bits 32 - 47 of result  */
+      
+      MOV   R3,R5          /* a.hi */
+      LDW   R2,(R7,#4)     /* b.hi */
+      LDL   R6,#%XGATE_8(IMULU)
+      LDH   R6,#%XGATE_8_H(IMULU)
+      JAL   R6             /* a.hi * b.hi */
+      LDW   R3,(R0,R7+)
+      ADD   R3,R3,R2
+      MOV   R6,R3
+      ANDH  R6,#0
+      LSL   R6,#8
+      LSR   R3,#8
+      LDB   R2,(R0,R7+)    /* significant part of a * b in R3:R2 */
+      ADDL  R7, #5     
+      OR    R2,R2,R6
+      OR    R6,R2,R3
+      BEQ   Packed
+   loop1:
+      BITL  R3,#0x80               /* re-normalize */
+      BNE   normalized
+      DEC   R4
+      BEQ   normalized
+      LSL   R2,#1
+      CSL   R3,#1
+      BRA   loop1
+   normalized:
+      TST   R4
+   loop2:   
+      BPL   Pack
+      LSR   R3,#1
+      CSR   R2,#1
+      INC   R4
+      BRA   loop2
+   Pack:   
+      LDL   R6,#0x77  /* exponent mask */
+      BFINS R3,R4,R6
+      TST   R1
+      BPL   SetSign                                                                              
+      ANDH  R3, #0x7F   
+      BRA   Packed
+   SetSign:
+      ORH   R3, #0x80
+   Packed:  
+      LDW   R4,(R0,R7+)   /* restore callee saved register */
+      LDW   R1,(R0,R7+)   /* restore callee saved register */
+      LDW   R5,(R0,R7+)   /* restore callee saved register */
+      LDW   R6,(R0,R7+)   /* restore return address */
+      ADDL  R7, #4     
+      JAL   R6
+  }
+}
+
+
+#define _M(offset)  (R7,offset+2)  /* offset 0 to 3 */
+#define _t0         (R7,6)
+#define _t1         (R7,0)
+
+#pragma NO_FRAME
+#pragma NO_EXIT
+#pragma NO_ENTRY
+
+void FDIV(void) {
+ /* mul ValA([SP:0..SP:3]) and ValB(R3:R2) */
+ /* format: "seee eeee  emmm mmmm  mmmm mmmm  mmmm mmmm" */
+ /* s: sign, e: exponent, m: mantissa (without leading 1 bit) */
+ enum {
+    FrameSize= 8
+ };
+ asm {
+      STW   R6,(R0,-R7)    /* store return address */
+      STW   R5,(R0,-R7)    /* store callee saved register */
+      STW   R1,(R0,-R7)    /* store callee saved register */
+      STW   R4,(R0,-R7)    /* store callee saved register */
+
+      LDW   R5,(R7,#FrameSize+0) /* load high word of ValA     */
+      XNOR  R1,R5,R3       /* result sign */
+      STW   R1,(R0,-R7)    /* _t0 */
+      LDL   R4, #0x77      /* exponent extraction mask */
+      BFEXT R6,R5,R4       /* get exponent of ValA (0..255) */
+      BEQ   _FDIV_l1
+      ORL   R5,#0x80
+      
+   _FDIV_l1:  
+      ANDH  R5,#0x00
+      BFEXT R4,R3,R4       /* get exponent of ValB (0..255) */
+      BEQ   _FDIV_l2
+      ORL   R3,#0x80
+      
+   _FDIV_l2:
+      ANDH  R3,#0x00
+      
+      SUB   R4,R6,R4       /* resulting exp in R4 */
+      ADDL  R4,#127
+      
+      STW   R0,(R0,-R7)    /* _M(2) */
+      STW   R0,(R0,-R7)    /* _M(0) */
+      LDL   R6,#24
+      STW   R6,(R0,-R7)    /*_t1        */
+      LDW   R6,(R7,#FrameSize+2+8) /* load low word of ValA */
+      ADDL  R0,#0              /* clear carry */
+   _shift_loop:
+      BCS   _div_1
+      CMP   R3,R5
+      BNE   _div_2
+      CMP   R2,R6
+   _div_2:  
+      BHI   _div_3
+   _div_1:
+      SUB   R6,R6,R2
+      SBC   R5,R5,R3
+      SUBL  R0,#1              /* set carry */
+   _div_3:
+      LDW   R1,_M(2)
+      CSL   R1,#1
+      STW   R1,_M(2)
+      LDW   R1,_M(0)
+      CSL   R1,#1
+      STW   R1,_M(0)
+      CSL   R6,#1
+      CSL   R5,#1
+      LDW   R1,_t1
+      DEC   R1
+      STW   R1,_t1
+      BNE   _shift_loop
+      LDW   R2,_M(2)
+      LDW   R3,_M(0)   
+      OR    R6,R2,R3
+      BEQ   Packed
+   loop1:
+      BITL  R3,#0x80               /* re-normalize */
+      BNE   normalized
+      DEC   R4
+      BEQ   normalized
+      LSL   R2,#1
+      CSL   R3,#1
+      BRA   loop1
+   normalized:
+      TST   R4
+   loop2:   
+      BPL   Pack
+      LSR   R3,#1
+      CSR   R2,#1
+      INC   R4
+      BRA   loop2
+   Pack:   
+      LDL   R6,#0x77  /* exponent mask */
+      BFINS R3,R4,R6
+      LDW   R1,_t0
+      TST   R1
+      BPL   SetSign
+      ANDH  R3, #0x7F   
+      BRA   Packed
+   SetSign:
+      ORH   R3, #0x80
+   Packed:  
+      ADDL  R7,#8         /* release stack space used for _M, _t0 and _t1    */
+      LDW   R4,(R0,R7+)   /* restore callee saved register */
+      LDW   R1,(R0,R7+)   /* restore callee saved register */
+      LDW   R5,(R0,R7+)   /* restore callee saved register */
+      LDW   R6,(R0,R7+)   /* restore return address */
+      ADDL  R7, #4     
+      JAL   R6
+  }
+}
+
+#pragma NO_FRAME
+#pragma NO_EXIT
+#pragma NO_ENTRY
+
+void FCMP (void) {
+ /* signed flags(ValA([SP:0..SP:3]) - ValB(R3:R2)). use signed branches afterwards! */
+ /* format: "seee eeee  emmm mmmm  mmmm mmmm  mmmm mmmm" */
+ /* s: sign, e: exponent, m: mantissa (without leading 1 bit) */
+  asm {
+      STW   R2,(R0,-R7)    /* store callee saved register */
+      LDW   R4,(R7,#2) /* load high word of ValA     */
+      XNOR  R0,R4,R3       /* result sign */
+      BMI   same_sign
+      CMP   R4,R3					 /* a.hi - b.hi */
+      BRA   flags_set
+   same_sign:
+      TST   R4
+      BMI   both_neg
+      CMP   R4,R3
+      BNE   flags_set
+      LDW   R4,(R7,#4) /* load low word of ValA     */
+      XNORH R4,0x7F
+      XNORH R2,0x7F
+      CMP   R4,R2
+      BRA   flags_set
+   both_neg:
+      CMP   R3,R4
+      BNE   flags_set
+      LDW   R4,(R7,#4) /* load low word of ValA     */
+      XNORH R4,0x7F
+      XNORH R2,0x7F
+      CMP   R2,R4
+   flags_set:   
+      LDW   R2,(R0,R7+)   /* restore callee saved register */
+      LDW   R4,(R0,R7+)   /* release pushed params */
+      LDW   R4,(R0,R7+)   /* release pushed params */
+      JAL   R6
+  }
+}
+
+#pragma NO_FRAME
+#pragma NO_EXIT
+#pragma NO_ENTRY
+
+void FSFLOAT(void) {
+ /* signed long a; (float)a  (a in R3:R2,  result in R3:R2) */
+ /* result format: "seee eeee  emmm mmmm  mmmm mmmm  mmmm mmmm" */
+ /* s: sign, e: exponent, m: mantissa (without leading 1 bit) */
+  asm {
+      STW   R4,(R0,-R7)    /* store callee saved register */
+      STW   R5,(R0,-R7)    /* store callee saved register */
+      STW   R6,(R0,-R7)    /* store callee saved register */
+      MOV   R4,R0
+      TST   R3
+      BPL   is_pos
+      SUB   R2,R0,R2 
+      SBC   R3,R0,R3
+      XNOR  R4,R0,R0
+   is_pos:
+      OR    R0,R2,R3
+      BEQ   Packed
+      LDL   R5,#(126+32)
+   norm:
+      DEC   R5   
+      LSL   R2,#1
+      CSL   R3,#1
+      BPL   norm
+      LSR   R2,#8
+      MOV   R6,R3
+      ANDH  R6,#0
+      LSL   R6,#8
+      OR    R2,R2,R6
+      LSR   R3,#8
+      LDL   R6,#0x77  /* exponent mask */
+      BFINS R3,R5,R6
+      TST   R4
+      BMI   SetSign
+      ANDH  R3, #0x7F   
+      BRA   Packed
+   SetSign:
+      ORH   R3, #0x80
+   Packed:  
+      LDW   R6,(R0,R7+)   /* restore callee saved register */
+      LDW   R5,(R0,R7+)   /* restore callee saved register */
+      LDW   R4,(R0,R7+)   /* restore callee saved register  */
+      JAL   R6     
+  }
+}
+
+#pragma NO_FRAME
+#pragma NO_EXIT
+#pragma NO_ENTRY
+
+void FUFLOAT(void) {
+ /* unsigned long a; (float)a  (a in R3:R2,  result in R3:R2) */
+ /* result format: "seee eeee  emmm mmmm  mmmm mmmm  mmmm mmmm" */
+ /* s: sign, e: exponent, m: mantissa (without leading 1 bit) */
+  asm {
+      STW   R5,(R0,-R7)    /* store callee saved register */
+      STW   R6,(R0,-R7)    /* store callee saved register */
+      OR    R0,R2,R3
+      BEQ   Packed
+      LDL   R5,#(126+32)
+   norm:
+  		TST   R3
+  		BMI   normalized
+      DEC   R5   
+      LSL   R2,#1
+      CSL   R3,#1
+      BRA   norm
+   normalized:    
+      LSR   R2,#8
+      MOV   R6,R3
+      ANDH  R6,#0
+      LSL   R6,#8
+      OR    R2,R2,R6
+      LSR   R3,#8
+      LDL   R6,#0x77  /* exponent mask */
+      BFINS R3,R5,R6
+   Packed:  
+      LDW   R6,(R0,R7+)   /* restore callee saved register */
+      LDW   R5,(R0,R7+)   /* restore callee saved register */
+      JAL   R6     
+  }
+}
+
+
+#pragma NO_FRAME
+#pragma NO_EXIT
+#pragma NO_ENTRY
+
+void FSTRUNC(void) {
+ /* float a; (signed long)a  (a in R3:R2,  result in R3:R2) */
+ /* result format: "seee eeee  emmm mmmm  mmmm mmmm  mmmm mmmm" */
+ /* s: sign, e: exponent, m: mantissa (without leading 1 bit) */
+  asm {
+      STW   R4,(R0,-R7)    /* store callee saved register */
+      STW   R5,(R0,-R7)    /* store callee saved register */
+      MOV   R5,R3
+      LDL   R4, #0x77      /* exponent extraction mask */
+      BFEXT R4,R3,R4       /* get exponent of a (0..255) */
+      BEQ   is_denorm
+      ORL   R3,#0x80      
+   is_denorm:
+      ANDH  R3,#0x00
+      SUBL  R4,#(127+23) 
+      BEQ   done				 	/* mantissa is equivalent to truntated value */
+      BMI   smaller
+   enlarge:   
+      LSL   R2,#1
+      CSL   R3,#1
+      DEC   R4
+      BNE   enlarge
+      BRA   done
+   smaller:
+      LSR   R3,#1
+      CSR   R2,#1
+      OR    R0,R2,R3
+      BEQ   done
+      INC   R4
+      BNE   smaller
+   done:
+      TST   R5
+      BPL   is_pos
+      SUB   R2,R0,R2
+      SBC   R3,R0,R3
+   is_pos:   
+      LDW   R5,(R0,R7+)   /* restore callee saved register */
+      LDW   R4,(R0,R7+)   /* restore callee saved register */
+      JAL   R6   
+  }
+}
+
+
+#pragma NO_FRAME
+#pragma NO_EXIT
+#pragma NO_ENTRY
+
+void FUTRUNC(void) {
+ /* float a; (unsigned long)a  (a in R3:R2,  result in R3:R2) */
+ /* result format: "seee eeee  emmm mmmm  mmmm mmmm  mmmm mmmm" */
+ /* s: sign, e: exponent, m: mantissa (without leading 1 bit) */
+  asm {
+      STW   R4,(R0,-R7)    /* store callee saved register */
+      LDL   R4, #0x77      /* exponent extraction mask */
+      BFEXT R4,R3,R4       /* get exponent of a (0..255) */
+      BEQ   is_denorm
+      ORL   R3,#0x80      
+   is_denorm:
+      ANDH  R3,#0x00
+      SUBL  R4,#(127+23) 
+      BEQ   done				 	/* mantissa is equivalent to truntated value */
+      BMI   smaller
+   enlarge:   
+      LSL   R2,#1
+      CSL   R3,#1
+      DEC   R4
+      BNE   enlarge
+      BRA   done
+   smaller:
+      LSR   R3,#1
+      CSR   R2,#1
+      OR    R0,R2,R3
+      BEQ   done
+      INC   R4
+      BNE   smaller
+   done:
+      LDW   R4,(R0,R7+)   /* restore callee saved register */
+      JAL   R6   
+  }
+}
+
+
+#pragma NO_FRAME
+#pragma NO_EXIT
+#pragma NO_ENTRY
+
+void FNEG(void) {
+ /* -a  (a in R3:R2,  result in R3:R2) */
+ /* result format: "seee eeee  emmm mmmm  mmmm mmmm  mmmm mmmm" */
+ /* s: sign, e: exponent, m: mantissa (without leading 1 bit) */
+  asm {
+      OR    R0,R2,R3
+      BEQ   done
+      XNORH R3,#0x7F
+   done:   
+      JAL   R6   
+  }
+}
+  
+
+/************** floating point math routines (IEEE32 only) **************/
+#pragma NO_FRAME
+#pragma NO_EXIT
+#pragma NO_ENTRY
+
+/*lint -esym(715, x) , this function contains HLI only */
+/*lint -esym(715, exp) , this function contains HLI only */
+/*lint -esym(818, exp) , MISRA 16.7 ADV, this function contains HLI only */    
+double frexp   (double x, int *exp) {
+/* Split x into mantissa (return value) and exponent. The mantissa always is in the */
+/* interval 0.5 > m <= 1.0, except if x == 0.0: in this case, m = 0.0 and the expon- */
+/* ent exp = 0.  */
+/* x:      R4:R3 */
+/* *exp:   R2 */
+/* return: R3:R2 */
+  asm {
+      STW   R5,(R0,-R7)    /* store callee saved register */
+      STW   R6,(R0,-R7)    /* store callee saved register */
+      LDL   R5, #0x77      /* exponent extraction mask */
+      BFEXT R5,R4,R5       /* get exponent of x (0..255) */
+      BEQ   is_denorm
+      ANDH  R4,#0x80 
+      SUBL  R5,#126
+      BRA   Pack_126
+   is_denorm:  
+      OR    R0,R4,R3
+      BEQ   Zero
+      ANDH  R4,#0x80 
+      MOV   R6,R4 				/* remember sign (will be overwritten by CSL R4,#1) */
+      ANDL  R6,#0
+      SUBL  R5,#125
+   norm:  
+      DEC   R5
+      LSL   R3,#1
+      CSL   R4,#1
+      BITL  R4,#0x80
+      BEQ   norm 
+      OR    R4,R4,R6      /* re-insert sign */
+      BRA   Pack_126
+   Zero:
+      STW   R0,(R2,#0)
+      BRA   done
+   Pack_126:   
+      STW   R5,(R2,#0)
+      ANDL  R4,#0x7F                                                    
+      ORH   R4,#0x3F  
+   done:   
+      MOV   R2,R3
+      MOV   R3,R4                                                  
+      LDW   R6,(R0,R7+)    /* restore callee saved register */
+      LDW   R5,(R0,R7+)    /* restore callee saved register */
+      JAL   R6                                                                                  
+  }
+} /*lint !e533 , MISRA 16.8 REQ, this function contains HLI only */
+/*lint +esym(715, x) */
+/*lint +esym(715, exp) */
+/*lint +esym(818, exp) */    
+
+#pragma NO_FRAME
+#pragma NO_EXIT
+#pragma NO_ENTRY
+
+/*lint -esym(715, x) , this function contains HLI only */
+/*lint -esym(715, exp) , this function contains HLI only */
+double ldexp   (double x, int exp) {
+/* Calculate x * (2**exp)  */
+/* x:      R4:R3 */
+/* exp:    R2 */
+/* return: R3:R2 */
+  asm {
+      STW   R5,(R0,-R7)    /* store callee saved register */
+      STW   R6,(R0,-R7)    /* store callee saved register */
+      MOV   R6,R4          /* remember sign (will be overwritten by CSL R4,#1) */
+      ANDL  R6,#0
+      ANDH  R6,#0x80
+      LDL   R5, #0x77      /* exponent extraction mask */
+      BFEXT R5,R4,R5       /* get exponent of x (0..255) */
+      BNE   is_norm
+      INC   R5
+      OR    R0,R3,R4
+      BEQ   Packed
+   normalize:   
+      LSL   R3,#1
+      CSL   R4,#1
+      DEC   R5
+      BITL  R4,#0x80
+      BEQ   normalize
+      BRA   add_exp
+   is_norm:
+      ORL   R4,#0x80
+      ANDH  R4,#0
+   add_exp:   
+      ADD   R5,R5,R2
+      BPL   Pack
+      DEC   R5
+   denormalize:   
+      LSR   R4,#1
+      CSR   R3,#1
+      OR    R0,R3,R4
+      BEQ   Packed      
+      INC   R5
+      BMI   denormalize
+   Pack:
+      OR    R4,R4,R6			 /* insert sign */
+      LDL   R6, #0x77      /* exponent extraction mask */
+      BFINS R4,R5,R6       /* insert exponent of x (0..255) */
+   Packed:   
+      MOV   R2,R3
+      MOV   R3,R4                                                  
+      LDW   R6,(R0,R7+)    /* restore callee saved register */
+      LDW   R5,(R0,R7+)    /* restore callee saved register         */
+      JAL   R6
+  }
+} /*lint !e533 , MISRA 16.8 REQ, this function contains HLI only */
+/*lint +esym(715, x) */
+/*lint +esym(715, exp) */
+
+#pragma NO_FRAME
+#pragma NO_EXIT
+#pragma NO_ENTRY
+
+/*lint -esym(715, x) , this function contains HLI only */
+/*lint -esym(715, int_part) , this function contains HLI only */
+/*lint -esym(818, int_part) , MISRA 16.7 ADV, this function contains HLI only */    
+double modf    (double x, double *int_part) {
+/* Split x into integral and fractional part (return value).  */
+/* x:        R4:R3 */
+/* int_part: R2 */
+/* return:   R3:R2 */
+  asm {
+      STW   R6,(R0,-R7)    /* store callee saved register */
+      LDL   R6, #0x77      /* exponent extraction mask */
+      BFEXT R6,R4,R6       /* get exponent of x (0..255) */
+      SUBL  R6,#127
+      BLT   fract_only
+      SUBL  R6,#24
+      BGE   int_only            
+      STW   R3,(R0,-R7)
+      STW   R4,(R0,-R7)
+      MOV   R6,R2
+      MOV   R2,R3
+      MOV   R3,R4
+      MOV   R4,R6
+      LDL   R6,#%XGATE_8(FSTRUNC)
+      LDH   R6,#%XGATE_8_H(FSTRUNC)
+      JAL   R6
+      LDL   R6,#%XGATE_8(FSFLOAT)
+      LDH   R6,#%XGATE_8_H(FSFLOAT)
+      JAL   R6
+      STW   R3,(R4,#0)    
+      STW   R2,(R4,#2)      
+      LDL   R6,#%XGATE_8(FSUB)
+      LDH   R6,#%XGATE_8_H(FSUB)
+      JAL   R6      
+      BRA   done
+   fract_only:
+      STW   R0,(R2,#0)    
+      STW   R0,(R2,#2)      
+      MOV   R2,R3
+      MOV   R3,R4  
+      BRA   done
+   int_only:
+      STW   R4,(R2,#0)    
+      STW   R3,(R2,#2)   
+      MOV   R2,R0 
+      MOV   R3,R0 
+   done:   
+      LDW   R6,(R0,R7+)    /* restore callee saved register */
+      JAL   R6
+  }
+} /*lint !e533 , MISRA 16.8 REQ, this function contains HLI only */
+/*lint +esym(715, x) */
+/*lint +esym(715, int_part) */
+/*lint +esym(818, int_part) */    
+
+#endif
+/*lint -efile(766, hidef.h) , hidef.h contains CODE_SEG, CONST_SEG and STRING_SEG pragmas for XGATE */

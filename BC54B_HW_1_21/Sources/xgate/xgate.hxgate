@@ -1,0 +1,24 @@
+#ifndef __XGATE_HXGATE_
+#define __XGATE_HXGATE_
+
+#include <hidef.h>
+
+typedef void (*_NEAR XGATE_Function)(int);
+typedef struct {
+    XGATE_Function pc;
+    int dataptr;
+} XGATE_TableEntry;
+
+#pragma push
+#pragma CONST_SEG __GPAGE_SEG XGATE_VECTORS
+extern const XGATE_TableEntry XGATE_VectorTable[];
+#pragma pop
+
+
+
+#define PWM_SEM_NUM 2
+#define SOC_ADC_SEM_NUM 3
+
+
+#endif /* __XGATE_H_ */
+
